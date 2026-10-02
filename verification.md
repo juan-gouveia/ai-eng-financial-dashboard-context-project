@@ -108,33 +108,80 @@ El proxy cubre la conexión local por defecto. Para apuntar a otro origen, `fron
 
 ## Convenciones útiles para contribuir y agentes
 
-### Convenciones útiles
+### Arquitectura y contratos
 
-- En frontend, usa el alias `@/` para imports desde `src`; separa componentes de dashboard (`components/dashboard`) de piezas UI reutilizables (`components/ui`). ✅
-<!-- Nota: es el patrón mayoritario, pero hay imports relativos: `kpi-row.tsx` importa `./kpi-card`, `main.tsx` importa `./App.tsx` y los archivos de `src/lib` se importan entre sí con `./`. -->
-- Mantén cálculos y formateadores puros en `frontend/src/lib/financial-utils.ts`, separados del render de React, y cubre cambios con Vitest en `frontend/src/lib/financial-utils.test.ts`. ✅
-<!-- Nota: verificado ejecutando `npx vitest run`: 1 archivo, 5 tests en verde. -->
-- En backend, declara modelos de respuesta Pydantic y asígnalos con `response_model`; limita valores admitidos con `Literal` y define defaults o límites de query mediante `Query`. ✅
-<!-- Nota: todos los endpoints siguen el patrón salvo `GET /health`, que no declara `response_model` y devuelve un `dict`. -->
-- Sigue las ubicaciones de prueba existentes: Vitest en `frontend/src/lib/*.test.ts` y pytest con `TestClient` en `backend/tests/`. ✅
-<!-- Nota: no hay `vitest.config.*`; Vitest reutiliza `vite.config.ts` (incluido el alias `@`) y su patrón por defecto de `*.test.ts`. pytest no está instalado en el Python local; las pruebas de backend se ejecutan en el contenedor (p. ej. `docker compose exec backend pytest`). No las ejecuté en esta revisión. -->
-- Reutiliza los tokens de tema de `frontend/src/index.css` y las clases Tailwind existentes para mantener coherencia visual. ✅
-<!-- Nota: los componentes ya usan variables de `index.css` (`--chart-income`, `--chart-outcome`, `--chart-profit`, `--income-badge`, `--color-border`, etc.) y no hay colores hex ni paletas Tailwind fijas en `src/components`. -->
-- Mantén `frontend/package-lock.json` sincronizado con cambios de dependencias en `frontend/package.json`. ✅
-<!-- Nota: en esta copia local el lockfile tiene cambios staged sin cambios en `package.json` (provienen del `npm install`); conviene decidir si se commitean o se descartan. -->
-- Para reproducir la conexión local, usa Docker Compose: el proxy de Vite y el hostname del backend dependen de esa red. ✅
-<!-- Nota: alternativa fuera de Compose: definir `VITE_API_BASE_URL` (p. ej. `http://localhost:8000`); funciona porque el backend permite CORS de cualquier origen. -->
+**Convenciones**
 
-### Patrones arriesgados
+- Separa componentes de dashboard (`frontend/src/components/dashboard/`) de piezas UI reutilizables (`frontend/src/components/ui/`).
+- Mantén cálculos y formateadores puros en `frontend/src/lib/financial-utils.ts`, separados del render de React.
+- En backend, define modelos de respuesta Pydantic, usa `response_model` y valida valores y parámetros con `Literal` y `Query`.
+
+**Patrones arriesgados**
 
 - El contrato API no está generado ni compartido: los modelos Pydantic viven en `backend/app/routes.py` y los tipos TypeScript en `frontend/src/lib/financial-types.ts`. Al cambiar campos o añadir consumo de endpoints, actualiza ambos lados y sus pruebas; actualmente `App.tsx` hace el `fetch` directamente y solo consume `/api/metrics`. ✅
 <!-- Nota: `create_date` es `date` en Pydantic y `string` en TypeScript; coinciden porque FastAPI serializa la fecha como ISO `YYYY-MM-DD`. -->
-- `docker-compose.yml` usa `depends_on` sin `healthcheck`, que ordena el inicio pero no espera a que la API esté lista. `App.tsx` hace una única petición al montar y no reintenta; un fallo durante el arranque queda como error hasta recargar la página. ✅
-<!-- Nota: la petición fallida llega como 5xx del proxy de Vite, `response.ok` es falso y App.tsx muestra el mensaje de error; el `debugpy` delante de Uvicorn puede alargar ese arranque. -->
 - `generate_mock_movements` reinicia el generador global con `random.seed(42)` en cada petición; código adicional que use `random` en el mismo proceso comparte ese estado. ✅
 - CORS permite cualquier origen junto con credenciales. No amplíes esta configuración a un despliegue público sin limitar los orígenes autorizados. ✅
 <!-- Nota: con `allow_origins=["*"]` y `allow_credentials=True`, Starlette responde con el origen concreto de la petición cuando hay cookies, así que en la práctica acepta credenciales desde cualquier sitio. -->
-- El backend no fija versiones y su imagen instala también dependencias de prueba. Cambios de dependencias pueden afectar reproducibilidad y tamaño/alcance de la imagen. ✅
-- `frontend/components.json` declara `@/hooks`, pero no existe `frontend/src/hooks/`; `hero.png` y `mockMovements` tampoco aparecen usados en el frontend. No asumir que esos recursos o alias participan en el flujo activo. ✅
-- Las pruebas existentes cubren utilidades financieras y endpoints, pero no el flujo integrado navegador → proxy de Vite → API. Si se cambia proxy, configuración de ejecución o carga inicial, añadir una comprobación para esa integración. ✅
+- `GET /health` es la excepción al patrón de respuesta: no declara `response_model` y devuelve un `dict`.
+
+### Naming e imports
+
+**Convenciones**
+
+- Usa el alias `@/` para imports desde `src` cuando ayude a expresar rutas entre módulos; conserva imports relativos para dependencias cercanas dentro del mismo directorio.
+
+**Patrones arriesgados**
+
+- El estilo actual mezcla imports con alias y relativos: por ejemplo, `kpi-row.tsx` usa `./kpi-card`, `main.tsx` usa `./App.tsx` y los módulos de `src/lib` se importan entre sí con `./`. Evita imponer una conversión global sin necesidad.
+- `frontend/components.json` declara el alias `@/hooks`, pero no existe `frontend/src/hooks/`; `hero.png` y `mockMovements` tampoco aparecen usados en el frontend. No asumir que esos recursos o alias participan en el flujo activo. ✅
+
+### Testing
+
+**Convenciones**
+
+- Ubica pruebas frontend junto a las utilidades en `frontend/src/lib/*.test.ts` y usa Vitest. Ejecutar `npx vitest run` dio 1 archivo y 5 tests en verde. ✅
+- En backend, sigue el patrón de pytest con `TestClient` en `backend/tests/`; los endpoints están cubiertos en `test_routes.py`. ✅
+<!-- Nota: no hay `vitest.config.*`; Vitest reutiliza `vite.config.ts` (incluido el alias `@`) y su patrón por defecto de `*.test.ts`. pytest no está instalado en el Python local; con Compose disponible se puede ejecutar `docker compose exec backend pytest`. Las pruebas backend no se ejecutaron en esta revisión. -->
+
+**Patrones arriesgados**
+
+- La cobertura no comprueba el flujo navegador → proxy de Vite → API. Si se cambia proxy, configuración de ejecución o carga inicial, añade una comprobación para esa integración. ✅
 <!-- Nota: `test_routes.py` cubre los 9 endpoints. En frontend solo se prueba `financial-utils.ts`: no hay tests de componentes ni de `App.tsx` (carga, error, fetch). -->
+
+### Documentación
+
+**Convenciones**
+
+- Mantén alineadas las instrucciones de `README.md` y `README.es.md` cuando cambie el arranque o la configuración local; FastAPI publica el esquema de rutas en `/docs`.
+
+**Patrones arriesgados**
+
+- Las instrucciones de ejecución existen en dos README en distintos idiomas; un cambio documentado en uno solo puede dejar el otro desactualizado.
+
+### DX y ejecución
+
+**Convenciones**
+
+- Usa Docker Compose para el flujo local reproducible: el proxy de Vite y el hostname del backend dependen de esa red. ✅
+<!-- Nota: fuera de Compose, define `VITE_API_BASE_URL` (por ejemplo, `http://localhost:8000`); CORS está habilitado para ese origen. -->
+- Para apuntar a otro backend, `App.tsx` usa `VITE_API_BASE_URL ?? ""`; si la variable está vacía, las peticiones son relativas y pasan por el proxy. ✅
+
+**Patrones arriesgados**
+
+- `docker-compose.yml` usa `depends_on` sin `healthcheck`: ordena el inicio, pero no espera a que la API esté lista. `App.tsx` hace una sola petición al montar y no reintenta; si falla durante el arranque, muestra un error hasta que se recarga la página. ✅
+<!-- Nota: la petición fallida llega como 5xx del proxy de Vite, `response.ok` es falso y `App.tsx` muestra el mensaje de error; `debugpy` delante de Uvicorn puede alargar ese arranque. -->
+- El backend arranca Uvicorn bajo `debugpy` con recarga automática; el comando está en `backend/Dockerfile`. Este modo puede afectar los tiempos de arranque y no describe por sí solo una configuración de producción. ✅
+
+### Dependencias y estilos
+
+**Convenciones**
+
+- Mantén `frontend/package-lock.json` sincronizado con cambios de dependencias en `frontend/package.json`. ✅
+- Reutiliza tokens de tema de `frontend/src/index.css` y clases Tailwind existentes para mantener coherencia visual. ✅
+<!-- Nota: los componentes ya usan variables de `index.css` (`--chart-income`, `--chart-outcome`, `--chart-profit`, `--income-badge`, `--color-border`, etc.) y no hay colores hex ni paletas Tailwind fijas en `src/components`. -->
+
+**Patrones arriesgados**
+
+- En esta copia local, `frontend/package-lock.json` tiene cambios staged sin cambios correspondientes en `package.json` (provienen del `npm install`); decide si deben incluirse antes de contribuir. ✅
+- El backend no fija versiones y su imagen instala también dependencias de pruebas. Los cambios de dependencias pueden afectar reproducibilidad y tamaño/alcance de la imagen. ✅
