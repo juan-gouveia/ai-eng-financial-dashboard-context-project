@@ -13,7 +13,7 @@
 	<!-- Nota: cubre computeKPIs, computeMonthlyData y los formateadores (formatCurrency/formatPercent) con Vitest. -->
 	- `frontend/package.json`: dependencias y scripts de desarrollo, build, lint y pruebas. ✅
 	- `frontend/package-lock.json`: lockfile de dependencias npm. ✅
-	<!-- Nota: actualmente tiene cambios locales sin commitear (staged) tras el npm install: vite 8.0.8 → 8.3.2, postcss 8.5.9 → 8.5.28, rolldown rc.15 → 1.2.12, entre otros. -->
+	<!-- Nota: se regeneró con `npm install` y se commiteó en 18ae052, sin cambios en `package.json`: vite 8.0.8 → 8.3.2, postcss 8.5.9 → 8.5.28, rolldown rc.15 → 1.2.12, entre otros. -->
 	<!-- Nota: el comentario siguiente ("también incluye los scripts...") se refiere a `frontend/package.json` (dos viñetas más arriba), no al lockfile. -->
 	<!-- Nota: también incluye los scripts preview, test:watch y test:coverage. -->
 	- `frontend/vite.config.ts`: configuración de Vite, alias `@` y proxy de `/api`. ✅
@@ -105,3 +105,84 @@ El proxy cubre la conexión local por defecto. Para apuntar a otro origen, `fron
 - Para la API, `/api/metrics/summary` agrupa por mes de forma predeterminada; `/api/metrics/categories/top` usa `outcome` y límite `5` por defecto (límite permitido de 1 a 20); `/api/metrics/comparison` requiere fechas de inicio y fin; `/api/metrics/alerts` usa un umbral de `0.3` y compara cada periodo con el promedio de los anteriores. ✅
 - Filtros adicionales de la API: `/api/metrics/summary` acepta `start_date`, `end_date`, `category`, `operation_type` y `business_type`; `/api/metrics/categories/top` y `/api/metrics/alerts` aceptan `start_date`, `end_date` y `business_type`. ✅
 - `/api/metrics/comparison` calcula automáticamente el periodo previo: misma duración que el rango solicitado, terminando el día anterior a `start_date`. ✅
+
+## Convenciones útiles para contribuir y agentes
+
+### Arquitectura y contratos
+
+**Convenciones**
+
+- Separa componentes de dashboard (`frontend/src/components/dashboard/`) de piezas UI reutilizables (`frontend/src/components/ui/`). ✅
+- Mantén cálculos y formateadores puros en `frontend/src/lib/financial-utils.ts`, separados del render de React. ✅
+- En backend, define modelos de respuesta Pydantic, usa `response_model` y valida valores y parámetros con `Literal` y `Query`. ✅
+
+**Patrones arriesgados**
+
+- El contrato API no está generado ni compartido: los modelos Pydantic viven en `backend/app/routes.py` y los tipos TypeScript en `frontend/src/lib/financial-types.ts`. Al cambiar campos o añadir consumo de endpoints, actualiza ambos lados y sus pruebas; actualmente `App.tsx` hace el `fetch` directamente y solo consume `/api/metrics`. ✅
+<!-- Nota: `create_date` es `date` en Pydantic y `string` en TypeScript; coinciden porque FastAPI serializa la fecha como ISO `YYYY-MM-DD`. -->
+- `generate_mock_movements` reinicia el generador global con `random.seed(42)` en cada petición; código adicional que use `random` en el mismo proceso comparte ese estado. ✅
+- CORS permite cualquier origen junto con credenciales. No amplíes esta configuración a un despliegue público sin limitar los orígenes autorizados. ✅
+<!-- Nota: con `allow_origins=["*"]` y `allow_credentials=True`, Starlette responde con el origen concreto de la petición cuando hay cookies, así que en la práctica acepta credenciales desde cualquier sitio. -->
+- `GET /health` es la excepción al patrón de respuesta: no declara `response_model` y devuelve un `dict`. ✅
+
+### Naming e imports
+
+**Convenciones**
+
+- Usa el alias `@/` para imports desde `src` cuando ayude a expresar rutas entre módulos; conserva imports relativos para dependencias cercanas dentro del mismo directorio. ✅
+
+**Patrones arriesgados**
+
+- El estilo actual mezcla imports con alias y relativos: por ejemplo, `kpi-row.tsx` usa `./kpi-card`, `main.tsx` usa `./App.tsx` y los módulos de `src/lib` se importan entre sí con `./`. Evita imponer una conversión global sin necesidad. ✅
+- `frontend/components.json` declara el alias `@/hooks`, pero no existe `frontend/src/hooks/`; `hero.png` y `mockMovements` tampoco aparecen usados en el frontend. No asumir que esos recursos o alias participan en el flujo activo. ✅
+
+### Testing
+
+**Convenciones**
+
+- Ubica pruebas frontend junto a las utilidades en `frontend/src/lib/*.test.ts` y usa Vitest. Ejecutar `npx vitest run` dio 1 archivo y 5 tests en verde. ✅
+- En backend, sigue el patrón de pytest con `TestClient` en `backend/tests/`; los endpoints están cubiertos en `test_routes.py`. ✅
+<!-- Nota: no hay `vitest.config.*`; Vitest reutiliza `vite.config.ts` (incluido el alias `@`) y su patrón por defecto de `*.test.ts`. pytest no está instalado en el Python local; con Compose disponible se puede ejecutar `docker compose exec backend pytest`. Las pruebas backend no se ejecutaron en esta revisión. -->
+
+**Patrones arriesgados**
+
+- La cobertura no comprueba el flujo navegador → proxy de Vite → API. Si se cambia proxy, configuración de ejecución o carga inicial, añade una comprobación para esa integración. ✅
+<!-- Nota: `test_routes.py` cubre los 9 endpoints. En frontend solo se prueba `financial-utils.ts`: no hay tests de componentes ni de `App.tsx` (carga, error, fetch). -->
+
+### Documentación
+
+**Convenciones**
+
+- Usa `/docs` (generado por FastAPI) como referencia actualizada de rutas y parámetros de la API. ✅
+
+**Patrones arriesgados**
+
+- Las instrucciones de ejecución existen en dos README en distintos idiomas; un cambio documentado en uno solo puede dejar el otro desactualizado. ✅
+<!-- Nota: hoy ambos README están alineados: mismas secciones, mismo comando `docker compose up --build`, mismas URLs y la misma instrucción sobre `VITE_API_BASE_URL`. -->
+
+### DX y ejecución
+
+**Convenciones**
+
+- Usa Docker Compose para el flujo local reproducible: el proxy de Vite y el hostname del backend dependen de esa red. ✅
+<!-- Nota: fuera de Compose, define `VITE_API_BASE_URL` (por ejemplo, `http://localhost:8000`); CORS está habilitado para ese origen. -->
+- Para apuntar a otro backend, `App.tsx` usa `VITE_API_BASE_URL ?? ""`; si la variable está vacía, las peticiones son relativas y pasan por el proxy. ✅
+
+**Patrones arriesgados**
+
+- `docker-compose.yml` usa `depends_on` sin `healthcheck`: ordena el inicio, pero no espera a que la API esté lista. `App.tsx` hace una sola petición al montar y no reintenta; si falla durante el arranque, muestra un error hasta que se recarga la página. ✅
+<!-- Nota: la petición fallida llega como 5xx del proxy de Vite, `response.ok` es falso y `App.tsx` muestra el mensaje de error. -->
+- El backend arranca Uvicorn bajo `debugpy` con recarga automática; el comando está en `backend/Dockerfile`. Este modo puede afectar los tiempos de arranque y no describe por sí solo una configuración de producción. ✅
+
+### Dependencias y estilos
+
+**Convenciones**
+
+- Mantén `frontend/package-lock.json` sincronizado con cambios de dependencias en `frontend/package.json`. ✅
+- Reutiliza tokens de tema de `frontend/src/index.css` y clases Tailwind existentes para mantener coherencia visual. ✅
+<!-- Nota: los componentes ya usan variables de `index.css` (`--chart-income`, `--chart-outcome`, `--chart-profit`, `--income-badge`, `--color-border`, etc.) y no hay colores hex ni paletas Tailwind fijas en `src/components`. -->
+
+**Patrones arriesgados**
+
+- El lockfile del repo se regeneró con `npm install` (commit 18ae052) sin cambios en `package.json`: trae versiones más nuevas que las originales (p. ej. vite 8.0.8 → 8.3.2, rolldown 1.0.0-rc.15 → 1.2.12). Si vuelve a cambiar sin tocar `package.json`, revisa la versión de npm antes de commitearlo. ✅
+- El backend no fija versiones y su imagen instala también dependencias de pruebas. Los cambios de dependencias pueden afectar reproducibilidad y tamaño/alcance de la imagen. ✅
