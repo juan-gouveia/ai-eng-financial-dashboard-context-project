@@ -105,3 +105,36 @@ El proxy cubre la conexión local por defecto. Para apuntar a otro origen, `fron
 - Para la API, `/api/metrics/summary` agrupa por mes de forma predeterminada; `/api/metrics/categories/top` usa `outcome` y límite `5` por defecto (límite permitido de 1 a 20); `/api/metrics/comparison` requiere fechas de inicio y fin; `/api/metrics/alerts` usa un umbral de `0.3` y compara cada periodo con el promedio de los anteriores. ✅
 - Filtros adicionales de la API: `/api/metrics/summary` acepta `start_date`, `end_date`, `category`, `operation_type` y `business_type`; `/api/metrics/categories/top` y `/api/metrics/alerts` aceptan `start_date`, `end_date` y `business_type`. ✅
 - `/api/metrics/comparison` calcula automáticamente el periodo previo: misma duración que el rango solicitado, terminando el día anterior a `start_date`. ✅
+
+## Convenciones útiles para contribuir y agentes
+
+### Convenciones útiles
+
+- En frontend, usa el alias `@/` para imports desde `src`; separa componentes de dashboard (`components/dashboard`) de piezas UI reutilizables (`components/ui`). ✅
+<!-- Nota: es el patrón mayoritario, pero hay imports relativos: `kpi-row.tsx` importa `./kpi-card`, `main.tsx` importa `./App.tsx` y los archivos de `src/lib` se importan entre sí con `./`. -->
+- Mantén cálculos y formateadores puros en `frontend/src/lib/financial-utils.ts`, separados del render de React, y cubre cambios con Vitest en `frontend/src/lib/financial-utils.test.ts`. ✅
+<!-- Nota: verificado ejecutando `npx vitest run`: 1 archivo, 5 tests en verde. -->
+- En backend, declara modelos de respuesta Pydantic y asígnalos con `response_model`; limita valores admitidos con `Literal` y define defaults o límites de query mediante `Query`. ✅
+<!-- Nota: todos los endpoints siguen el patrón salvo `GET /health`, que no declara `response_model` y devuelve un `dict`. -->
+- Sigue las ubicaciones de prueba existentes: Vitest en `frontend/src/lib/*.test.ts` y pytest con `TestClient` en `backend/tests/`. ✅
+<!-- Nota: no hay `vitest.config.*`; Vitest reutiliza `vite.config.ts` (incluido el alias `@`) y su patrón por defecto de `*.test.ts`. pytest no está instalado en el Python local; las pruebas de backend se ejecutan en el contenedor (p. ej. `docker compose exec backend pytest`). No las ejecuté en esta revisión. -->
+- Reutiliza los tokens de tema de `frontend/src/index.css` y las clases Tailwind existentes para mantener coherencia visual. ✅
+<!-- Nota: los componentes ya usan variables de `index.css` (`--chart-income`, `--chart-outcome`, `--chart-profit`, `--income-badge`, `--color-border`, etc.) y no hay colores hex ni paletas Tailwind fijas en `src/components`. -->
+- Mantén `frontend/package-lock.json` sincronizado con cambios de dependencias en `frontend/package.json`. ✅
+<!-- Nota: en esta copia local el lockfile tiene cambios staged sin cambios en `package.json` (provienen del `npm install`); conviene decidir si se commitean o se descartan. -->
+- Para reproducir la conexión local, usa Docker Compose: el proxy de Vite y el hostname del backend dependen de esa red. ✅
+<!-- Nota: alternativa fuera de Compose: definir `VITE_API_BASE_URL` (p. ej. `http://localhost:8000`); funciona porque el backend permite CORS de cualquier origen. -->
+
+### Patrones arriesgados
+
+- El contrato API no está generado ni compartido: los modelos Pydantic viven en `backend/app/routes.py` y los tipos TypeScript en `frontend/src/lib/financial-types.ts`. Al cambiar campos o añadir consumo de endpoints, actualiza ambos lados y sus pruebas; actualmente `App.tsx` hace el `fetch` directamente y solo consume `/api/metrics`. ✅
+<!-- Nota: `create_date` es `date` en Pydantic y `string` en TypeScript; coinciden porque FastAPI serializa la fecha como ISO `YYYY-MM-DD`. -->
+- `docker-compose.yml` usa `depends_on` sin `healthcheck`, que ordena el inicio pero no espera a que la API esté lista. `App.tsx` hace una única petición al montar y no reintenta; un fallo durante el arranque queda como error hasta recargar la página. ✅
+<!-- Nota: la petición fallida llega como 5xx del proxy de Vite, `response.ok` es falso y App.tsx muestra el mensaje de error; el `debugpy` delante de Uvicorn puede alargar ese arranque. -->
+- `generate_mock_movements` reinicia el generador global con `random.seed(42)` en cada petición; código adicional que use `random` en el mismo proceso comparte ese estado. ✅
+- CORS permite cualquier origen junto con credenciales. No amplíes esta configuración a un despliegue público sin limitar los orígenes autorizados. ✅
+<!-- Nota: con `allow_origins=["*"]` y `allow_credentials=True`, Starlette responde con el origen concreto de la petición cuando hay cookies, así que en la práctica acepta credenciales desde cualquier sitio. -->
+- El backend no fija versiones y su imagen instala también dependencias de prueba. Cambios de dependencias pueden afectar reproducibilidad y tamaño/alcance de la imagen. ✅
+- `frontend/components.json` declara `@/hooks`, pero no existe `frontend/src/hooks/`; `hero.png` y `mockMovements` tampoco aparecen usados en el frontend. No asumir que esos recursos o alias participan en el flujo activo. ✅
+- Las pruebas existentes cubren utilidades financieras y endpoints, pero no el flujo integrado navegador → proxy de Vite → API. Si se cambia proxy, configuración de ejecución o carga inicial, añadir una comprobación para esa integración. ✅
+<!-- Nota: `test_routes.py` cubre los 9 endpoints. En frontend solo se prueba `financial-utils.ts`: no hay tests de componentes ni de `App.tsx` (carga, error, fetch). -->
