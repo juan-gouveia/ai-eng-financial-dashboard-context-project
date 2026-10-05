@@ -17,6 +17,8 @@
 
 Devuelve los **filtros disponibles** (facets) para acotar las consultas de métricas: tipos de operación, tipos de negocio, categorías y rango de fechas del dataset.
 
+**Interfaz TypeSpec:** [`FacetsResponse`](../frontend/specs/api-types.ts)
+
 ### Parámetros de Query
 
 Ninguno.
@@ -27,11 +29,11 @@ Ninguno.
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `operation_types` | `string[]` | Valores posibles: `"income"`, `"outcome"` |
-| `business_types` | `string[]` | Valores posibles: `"B2B"`, `"B2C"` |
-| `categories` | `string[]` | Valores: `"suppliers"`, `"sales"`, `"operational"`, `"administrative"`, `"others"` |
-| `min_date` | `string (date)` | Fecha más antigua del dataset (`YYYY-MM-DD`) |
-| `max_date` | `string (date)` | Fecha más reciente del dataset (`YYYY-MM-DD`) |
+| `operation_types` | `OperationType[]` | Valores posibles: `"income"`, `"outcome"` |
+| `business_types` | `BusinessType[]` | Valores posibles: `"B2B"`, `"B2C"` |
+| `categories` | `Category[]` | Valores: `"suppliers"`, `"sales"`, `"operational"`, `"administrative"`, `"others"` |
+| `min_date` | `string (date)` | Fecha más antigua del dataset (`YYYY-MM-DD`). Se usa en la UI para mostrar el rango disponible. |
+| `max_date` | `string (date)` | Fecha más reciente del dataset (`YYYY-MM-DD`). Se usa en la UI para mostrar el rango disponible. |
 
 ### Ejemplo de Respuesta
 
@@ -60,6 +62,8 @@ Detecta **períodos atípicos** donde el gasto (`outcome`) supera el promedio hi
 | `start_date` | `string (date)` | ❌ | `null` | Filtro inicio (`YYYY-MM-DD`). |
 | `end_date` | `string (date)` | ❌ | `null` | Filtro fin (`YYYY-MM-DD`). |
 | `business_type` | `string` | ❌ | `null` | Filtrar por tipo de negocio: `"B2B"` o `"B2C"`. |
+
+**Interfaz TypeSpec:** [`AlertsRequestParams`, `AlertEntry`, `AlertsResponse`](../frontend/specs/api-types.ts)
 
 ### Respuesta (200 OK)
 
@@ -108,6 +112,8 @@ GET /api/metrics/alerts?threshold=0.3
 
 Devuelve las **categorías con mayor volumen** para un tipo de operación específico, ordenadas de mayor a menor monto total.
 
+**Interfaz TypeSpec:** [`TopCategoriesRequestParams`, `TopCategoryItem`, `TopCategoriesResponse`, `CategoryEntry`](../frontend/specs/api-types.ts)
+
 ### Parámetros de Query
 
 | Parámetro | Tipo | Requerido | Default | Descripción |
@@ -124,9 +130,11 @@ Devuelve las **categorías con mayor volumen** para un tipo de operación espec�
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `category` | `string` | Categoría: `"suppliers"`, `"sales"`, `"operational"`, `"administrative"`, `"others"`. |
-| `operation_type` | `string` | Tipo de operación: `"income"` o `"outcome"`. |
+| `category` | `Category` | `"suppliers"`, `"sales"`, `"operational"`, `"administrative"`, `"others"`. |
+| `operation_type` | `OperationType` | `"income"` o `"outcome"`. |
 | `total_amount` | `number` | Suma total acumulada en la categoría. |
+
+> **Nota:** El campo `percentage` (porcentaje sobre el total del grupo) no lo devuelve el backend; se calcula en el cliente a partir de los `total_amount` de cada grupo.
 
 ### Ejemplo de Respuesta
 
