@@ -43,23 +43,31 @@ function App() {
   }, []);
 
   return (
-    <main className="dark min-h-screen bg-background text-foreground">
+    <main id="main-content" aria-busy={loading} className="dark min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-8">
           <DashboardHeader period="2024 - Full Year" />
 
           {error ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive-foreground">
+            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive-foreground">
               {error}
             </div>
           ) : null}
 
-          <section aria-label="Key performance indicators">
+          {!loading && !error ? (
+            <div role="status" className="visually-hidden">Dashboard data loaded successfully</div>
+          ) : null}
+
+          <section aria-labelledby="kpi-section-heading" aria-busy={loading}>
+            <h2 id="kpi-section-heading" className="visually-hidden">
+              Key performance indicators
+            </h2>
             <KPIRow metrics={metrics} loading={loading} />
           </section>
 
           <section
             aria-label="Financial charts"
+            aria-busy={loading}
             className="grid grid-cols-1 gap-4 xl:grid-cols-2"
           >
             <IncomeOutcomeChart data={monthlyData} loading={loading} />
