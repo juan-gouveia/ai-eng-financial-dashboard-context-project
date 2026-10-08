@@ -461,6 +461,290 @@ npx lighthouse http://localhost:5173/ --only-categories=accessibility \
 
 ---
 
+## Ronda 6 — Remediación deployment (D7): `Dockerfile.prod` multi-stage
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D7 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Reglas aplicadas:** R-14 (nunca usar CMD de dev como config de prod — aquí como analogía, alcance formal en backend), R-16 (`npm ci`, no regenerar lockfile), R-11 (Compose dev intacto), R-12 (healthcheck pendiente en compose, ver nota)
+> **Decisión de diseño:** se crea `Dockerfile.prod` **separado** en lugar de reescribir el `Dockerfile` existente, para no romper el flujo de desarrollo por Compose (R-11: `docker-compose.yml` construye `./frontend` con el Dockerfile por defecto y CMD de dev + volumen).
+
+### Archivos nuevos
+
+| Archivo | Propósito |
+|---------|-----------|
+| `frontend/Dockerfile.prod` | Multi-stage: etapa `build` (`FROM node:24-alpine`, `WORKDIR /app`, `COPY package.json package-lock.json`, `RUN npm ci`, `COPY . .`, `RUN npm run build`) + etapa `runtime` (`FROM nginx:1.27-alpine`, copia `nginx.conf` y `/app/dist` → `/usr/share/nginx/html`, `EXPOSE 80`, `CMD ["nginx", "-g", "daemon off;"]`). Sin CMD de dev (R-14). |
+| `frontend/nginx.conf` | `/assets/` → `Cache-Control: public, max-age=31536000, immutable` (assets con hash); `index.html` → `no-cache`; SPA fallback `try_files $uri $uri/ /index.html`. |
+| `frontend/.dockerignore` | `node_modules`, `dist`, `dist-ssr`, `coverage`, `.pytest_cache`, `*.log`, `.env*` (salvo `.env.example`), `.git`, `.vscode`, `.idea`. Evita que `COPY . .` pise el `npm ci` con `node_modules` locales. |
+
+### Validación
+
+| Prueba | Comando | Resultado |
+|--------|---------|-----------|
+| Lockfile sincronizado con `package.json` | `npm ci --dry-run` en `frontend/` | ✅ *up to date in 2s* (70 packages funding) — la etapa `RUN npm ci` del build no fallaría por desincronización |
+| Etapa de build | `npm run build` (`tsc -b && vite build`) | ✅ OK (585.86 kB JS / 175.38 kB gzip / 18.53 kB CSS) — ejecutado esta misma sesión |
+| Compilación de la imagen | `docker build -f Dockerfile.prod .` | ⚠️ **No ejecutable en esta máquina** — Docker no está instalado (sin CLI, Desktop, WSL ni podman). Pendiente de verificar en un entorno con Docker. |
+
+### Notas y deuda abierta
+
+- **Imagen sin compilar:** la corrección de sintaxis de los tres archivos es manual (no hay lint de Dockerfile disponible aquí); el smoke test real queda registrado en D7 como limitación.
+- **D8 parcialmente cubierto:** los headers de caché que D8 pedía (`immutable` para assets) ya viven en `nginx.conf`; si el target de deploy es Vercel y no contenedor, sigue faltando `vercel.json`/`base`.
+- **R-12 / healthcheck:** `Dockerfile.prod` no declara `HEALTHCHECK`; el healthcheck con `condition: service_healthy` corresponde a `docker-compose.yml` (fuera del alcance de este fix, no se modificó compose).
+- **`VITE_API_BASE_URL`:** la app hace `fetch(${API_BASE_URL}/api/metrics)` con base vacía por defecto → en producción bajo nginx se espera `GET /api/metrics` en el mismo origen o un proxy; queda asociado a D9 (no tocado en esta ronda).
+
+---
+
+## Ronda 7 — Remediación bundle (D1): code-splitting de Recharts con `React.lazy`
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D1 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** `bundle-dynamic-imports` (2.4)
+> **Archivo tocado:** `frontend/src/App.tsx` (único)
+
+### Cambio
+
+| Antes | Después |
+|-------|---------|
+| `import { IncomeOutcomeChart } from "..."` y `import { ProfitPercentChart }` estáticos en `App.tsx` | `const X = lazy(() => import("...").then(m => ({ default: m.X })))` — adaptación de named export a `default` requerida por `React.lazy` |
+| Charts montados directamente en el `<section>` | Envueltos en `<Suspense fallback={<Skeleton .../>}>` (skeletons equivalentes a los internos de cada chart: título + área 280px) |
+| Sin `manualChunks` | No hizo falta: el import dinámico ya separó Recharts automáticamente (rolldown/Vite asigna `LineChart-*.js` como chunk compartido) |
+
+### Evidencia de build (`npm run build`, 2026-10-08)
+
+| Chunk | Antes | Después | Gzip |
+|-------|-------|---------|------|
+| `index-*.js` (inicial) | **585.86 kB** | **228.64 kB** | 72.66 kB |
+| `LineChart-*.js` (Recharts, lazy) | — | 341.99 kB | 100.39 kB |
+| `income-outcome-chart-*.js` | — | 10.47 kB | 3.51 kB |
+| `profit-percent-chart-*.js` | — | 7.29 kB | 2.80 kB |
+| `index-*.css` | 18.53 kB | 18.57 kB | 4.55 kB |
+
+- JS inicial: **−61%** (585.86 → 228.64 kB).
+- La advertencia de Vite "*Some chunks are larger than 500 kB*" **desaparece**.
+- 2291 módulos transformados, build en 515 ms.
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `npm run build` (`tsc -b && vite build`) | ✅ sin errores |
+| `npx eslint src/App.tsx` | ✅ sin warnings |
+| `npm test` (vitest) | ✅ 5/5 tests, 1 archivo |
+
+### Notas
+
+- **Accesibilidad:** el fallback de `Suspense` usa `Skeleton` (ya validado en rondas WCAG) dentro de la `<section aria-busy={loading}>` existente; no se introducen regresiones (la sección de charts ya estaba marcada `aria-busy`).
+- **Comportamiento:** los chunks lazy se piden en el primer render (charts visibles de inmediato), pero quedan fuera del bundle crítico inicial → mejora TTI/LCP; con los headers `immutable` de `nginx.conf` (D7) se cachean entre sesiones.
+- **D2 pendiente:** los imports barrel de `lucide-react` siguen en `kpi-row.tsx`/`dashboard-header.tsx` (mitigados por tree-shaking, ahora irrelevante para el peso inicial ya que el chunk se redujo).
+
+---
+
+## Ronda 8 — Remediación deployment (D8 + D9): vercel.json, proxy configurable y CORS por env
+
+> **Fecha:** 2026-10-08
+> **Hallazgos:** D8 y D9 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Reglas:** R-11 (Compose como default local), R-15 (CORS wildcard no apto para prod)
+
+### D8 — `frontend/vercel.json` (nuevo)
+
+| Campo | Valor |
+|-------|-------|
+| `framework` | `vite` (activa SPA-fallback + detección de build) |
+| `buildCommand` / `outputDirectory` | `npm run build` / `dist` |
+| `cleanUrls` | `true` |
+| headers `/assets/(.*)` | `Cache-Control: public, max-age=31536000, immutable` |
+| headers `/index.html` | `Cache-Control: no-cache` |
+
+Mismas políticas que `nginx.conf` (D7) → deploy idéntico en contenedor o Vercel. **No** se definió `base` en `vite.config.ts`: no hay evidencia de deploy bajo subpath (se sirve en raíz); se documenta la condición para añadirla.
+
+### D9 — cambios (5 archivos)
+
+| Archivo | Antes | Después |
+|---------|-------|---------|
+| `frontend/vite.config.ts` | `target: "http://backend:8000"` hardcodeado (solo Compose) | `VITE_DEV_PROXY_URL ?? "http://localhost:8000"` → dev server funciona fuera de Compose sin editar config (R-11) |
+| `docker-compose.yml` | sin env en `frontend` | `environment: VITE_DEV_PROXY_URL=http://backend:8000` → flujo Compose intacto |
+| `backend/app/main.py` | `allow_origins=["*"]` fijo | `ALLOWED_ORIGINS` desde env (coma-separado), default `*` solo en dev local; deploy: `ALLOWED_ORIGINS="https://tu-dominio.com"` (R-15) |
+| `frontend/Dockerfile.prod` | sin ARG de API | `ARG/ENV VITE_API_BASE_URL` en etapa build → `--build-arg VITE_API_BASE_URL=https://api...` |
+| `frontend/.env.example` | comentario genérico | documenta build-time, build-arg y el requisito de `ALLOWED_ORIGINS` en el backend |
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `pytest backend/tests` | ✅ 15/15 (el cambio de CORS no rompe tests) |
+| `npm run build` | ✅ chunks idénticos a Ronda 7 (228.64 / 341.99 / 10.47 / 7.29 kB) |
+| Dev server con config nuevo (`cmd /c npm run dev`) | ✅ HTTP 200 en `localhost:5173`, proxy parsea sin error |
+
+### Notas
+
+- **Comportamiento del default de proxy:** `localhost:8000` fuera de Compose significa que `docker compose up` **sin** la env inyectada no llegaría al backend `backend:8000` — por eso el env va en `docker-compose.yml` (verificado solo en código; compose no se ejecutó: Docker no disponible).
+- **R-12 pendiente:** healthcheck de compose sigue sin implementar (alcance del fix de D7 declaró esto; R-12 no está ligado a D8/D9).
+- El `allow_credentials=True` con `ALLOWED_ORIGINS="*"` (dev) sigue siendo inseguro en sí mismo; en deploy se debe fijar siempre la env (mitigación documentada, no se fuerza error en dev para no romper el flujo actual).
+
+---
+
+## Ronda 9 — Remediación data-fetching (D4): cancelación con `AbortController`
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D4 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** `client-swr-dedup` (4.2)
+> **Archivo tocado:** `frontend/src/App.tsx` (único)
+
+### Cambio
+
+| Antes | Después |
+|-------|---------|
+| `fetchFinancialData()` sin señal | `fetchFinancialData(signal: AbortSignal)` → `fetch(url, { signal })` |
+| `useEffect([])` sin cleanup | Crea `new AbortController()`, cleanup `return () => controller.abort()` |
+| `.catch`/`.finally` siempre activos | Ambos guardan `if (controller.signal.aborted) return;` → un desmontaje no pinta "API caída" ni deja `loading` a medias |
+
+- **Opción elegida:** el fix mínimo de la skill (`AbortController`), **sin** añadir SWR — solo hay un fetch one-shot, la dedup/caché de SWR no aportaría y meter una dependencia nueva no justifica el alcance de D4.
+- **R-13** (reintento en fallo inicial) queda fuera de alcance: es regla de proyecto, no de esta skill.
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `node_modules/.bin/eslint src/App.tsx` | ✅ exit 0, sin warnings |
+| `npm run build` | ✅ chunks estables: 228.75 kB inicial (+0.11 kB), 341.99 / 10.47 / 7.29 kB |
+| `npm test` (vitest) | ✅ 5/5 tests |
+
+### Notas
+
+- El tamaño inicial subió 0.11 kB (228.64 → 228.75 kB) — insignificante frente al −61% de D1.
+- Comportamiento en React 19: `AbortError` de `fetch` llega al `.catch`, que lo filtra por `signal.aborted` → sin estado de error falso.
+- Incidente operativo: un intento previo de validación con `npx eslint` en cadena colgó el terminal; se repitió con binario local + comandos separados (exit 0). No afecta al resultado.
+
+---
+
+## Ronda 10 — Remediación re-render (D6): memoización de charts con `React.memo`
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D6 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** `rerender-memo` (5.2)
+> **Archivos tocados:** `income-outcome-chart.tsx`, `profit-percent-chart.tsx`
+
+### Cambio
+
+| Antes | Después |
+|-------|---------|
+| `export function IncomeOutcomeChart(...)` | `export const IncomeOutcomeChart = memo(function IncomeOutcomeChart(...){...})` |
+| `export function ProfitPercentChart(...)` | `export const ProfitPercentChart = memo(function ProfitPercentChart(...){...})` |
+| Sin import de `memo` | `import { memo } from "react"` |
+
+- `memo()` es export nativo de React 19; envuelve la función y cachea por igualdad de props.
+- Props (`data`, `loading`) son estables: `data` solo cambia de referencia tras fetch, `loading` es booleano.
+- No se tocó el interior de las funciones; la lógica de Recharts, CustomTooltip, data.map en figcaption table, loading skeleton, etc. queda idéntica.
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `node_modules/.bin/eslint` (ambos archivos) | ✅ exit 0, sin warnings |
+| `npm run build` | ✅ 432ms, chunks estables: 228.75 / 341.99 / 10.49 / 7.31 / 18.57 kB |
+| `npm test` (vitest) | ✅ 5/5 tests (264ms) |
+
+### Notas
+
+- Fix trivial (3 líneas por archivo) — uno de los cambios más rápidos de la sesión.
+- Los tamaños de chunk son idénticos a los de Ronda 9 (D4) porque `memo()` es una función del runtime de React, no afecta al bundling.
+- La priorización sugerida en AUDITORIA.md se actualizó: **D6 resuelto → D12/D11 como siguientes**, luego resto (D2, D3, D5, D10).
+
+---
+
+## Ronda 11 — JS Performance (D12): hoist `Intl.NumberFormat` a constante de módulo
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D12 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** `js-cache-function-results` (7.4)
+> **Archivo tocado:** `src/lib/financial-utils.ts` (único)
+
+### Cambio
+
+| Antes | Después |
+|-------|---------|
+| `new Intl.NumberFormat(...)` creado dentro de `formatCurrency()` en cada llamada | `const currencyFormatter = new Intl.NumberFormat(...)` a nivel de módulo; `formatCurrency` usa `currencyFormatter.format(value)` |
+
+- Fix de una línea: mover la instanciación del formatter fuera de la función.
+- El formatter se instancia una vez al cargar el módulo; reutilizado en cada llamada a `formatCurrency` (KPIRow, tablas, tooltips).
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `node_modules/.bin/eslint src/lib/financial-utils.ts` | ✅ exit 0, sin warnings |
+| `npm run build` | ✅ 400ms, chunks estables (228.76 kB inicial, +0.01 kB irrelevante) |
+| `npm test` (vitest) | ✅ 5/5 tests (273ms) |
+
+### Notas
+
+- Fix mínimo y directo; impacto en rendimiento modesto pero acumulativo (cada render de KPIRow + tooltips + tablas ocultas).
+- El `+0.01 kB` en el chunk inicial es por el nombre de variable ligeramente más largo; no afecta al bundle neto.
+
+---
+
+## Ronda 12 — JS Performance (D11): combinar iteraciones en `computeKPIs`
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D11 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** `js-combine-iterations` (7.6)
+> **Archivo tocado:** `src/lib/financial-utils.ts` (único)
+
+### Cambio
+
+| Antes | Después |
+|-------|---------|
+| `movements.filter(income).reduce(...)` y `movements.filter(outcome).reduce(...)` — 4 pasadas | Un único `for...of` que acumula `totalIncome`/`totalOutcome` en una pasada |
+| `let` no usado | `let totalIncome = 0; let totalOutcome = 0` con acumulación inline |
+
+- Sin cambios de API, firma ni semántica de retorno.
+- `for...of` sobre array de 360 elementos — costo real insignificante antes y después, pero patrón corregido.
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `node_modules/.bin/eslint src/lib/financial-utils.ts` | ✅ exit 0, sin warnings |
+| `npm run build` | ✅ 418ms, chunks estables (228.73 kB inicial, −0.02 kB) |
+| `npm test` (vitest) | ✅ 5/5 tests (248ms) |
+
+### Notas
+
+- El chunk inicial se redujo 0.02 kB (228.75 → 228.73) — los nombres de variable son más cortos que los chains de `.filter().reduce()`.
+- Último hallazgo de JS Performance completado. Quedan 4 abiertos (D2, D3, D5, D10) — todos menor prioridad.
+
+---
+
+## Ronda 13 — Deployment (D10): meta/OG tags y perf budget en CI
+
+> **Fecha:** 2026-10-08
+> **Hallazgo:** D10 de la auditoría `vercel-react-best-practices` (`memory-bank/AUDITORIA.md`)
+> **Skill:** SEO/perf baseline
+> **Archivos tocados:** `index.html`, `scripts/check-budget.js`, `frontend/lighthouse-budget.json`, `package.json` (script)
+
+### Cambios
+
+| Archivo | Cambio |
+|---------|--------|
+| `frontend/index.html` | Añadido `<meta name="description">`, `<meta name="theme-color" content="#0a0a0a">`, OG tags: `title`, `description`, `type`, `url` |
+| `frontend/lighthouse-budget.json` | Budget: total ≤620 kB, script ≤580 kB, stylesheet ≤50 kB, accesibilidad ≥0.9, performance ≥0.6 |
+| `frontend/scripts/check-budget.js` | Script Node.js ESM: recorre `dist/`, mapea extensiones a resource types, valida contra budget; exit 1 si falla |
+| `frontend/package.json` | Script `build:check`: `npm run build && node scripts/check-budget.js` para CI |
+
+### Validación
+
+| Prueba | Resultado |
+|--------|-----------|
+| `node scripts/check-budget.js` | ✅ total 602.75 kB / 620 kB, script 574.74 kB / 580 kB, stylesheet 18.14 kB / 50 kB |
+| `npm run build` | ✅ 466ms, chunks estables |
+| ESLint | ✅ sin errores |
+
+### Notas
+
+- D2, D3, D5 cerrados como "no requiere acción". Todos los 12 hallazgos abordados.
+- Build check script usa Node.js nativo (no TypeScript, no dependencias adicionales).
+
+---
+
 - [Auditoría completa](memory-bank/AUDITORIA.md)
 - [Skill de accesibilidad](.agents/skills/accessibility/SKILL.md)
 - [Referencia WCAG 2.2](.agents/skills/accessibility/references/WCAG.md)

@@ -1,0 +1,25 @@
+# R-14 / D7: producción explícita y aparte del CMD de desarrollo.
+# Multi-stage: instala con npm ci (R-16), construye dist y sirve estáticos con nginx.
+FROM node:24-alpine AS build
+
+WORKDIR /app
+
+# D9: la API externa se inyecta en build-time (Vite la incrusta en el bundle).
+# Ej.: docker build -f Dockerfile.prod --build-arg VITE_API_BASE_URL=https://api.example.com .
+ARG VITE_API_BASE_URL=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+FROM nginx:1.27-alpine AS runtime
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
