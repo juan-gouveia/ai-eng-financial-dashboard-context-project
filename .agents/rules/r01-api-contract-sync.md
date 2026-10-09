@@ -6,3 +6,5 @@
 ## Guía específica del proyecto
 
 Al cambiar un campo o añadir consumo de un endpoint, actualiza los modelos Pydantic en `backend/app/routes.py`, los tipos en `frontend/src/lib/financial-types.ts` y las pruebas pertinentes en `backend/tests/test_routes.py` y `frontend/src/lib/financial-utils.test.ts`. Si cambian los valores de `Category`, `OperationType` o `BusinessType`, actualiza también los union types equivalentes. Conserva el formato ISO `YYYY-MM-DD` de `create_date`.
+
+Para el procedimiento paso a paso (incluye también `frontend/specs/api-types.ts` y `memory-bank/API_Reference.md`, que esta regla no cubría) usa el skill [`api-contract-sync`](../skills/api-contract-sync/SKILL.md).
