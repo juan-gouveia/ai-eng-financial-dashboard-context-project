@@ -745,6 +745,34 @@ Mismas políticas que `nginx.conf` (D7) → deploy idéntico en contenedor o Ver
 
 ---
 
+## Project Skills
+
+Inventario de skills de `.agents/skills/` con su estado de uso real en este proyecto. Distingue entre skills **del ecosistema** (genéricas, instaladas pero no escritas para este repo) y skills **internas** (creadas específicamente a partir de un hallazgo de este proyecto).
+
+### Skills del ecosistema — aplicadas, con cambios verificados
+
+| Skill | Rondas donde se aplicó | Cambios verificados |
+|---|---|---|
+| `accessibility` v2.0 | Ronda 1 – Ronda 5 | 0 hallazgos WCAG abiertos; Lighthouse Accessibility 100/100 en segunda corrida en vivo (2026-10-07). Ver [§ Verificación Lighthouse en vivo](#-verificación-lighthouse-en-vivo). |
+| `vercel-react-best-practices` v1.0.0 | Ronda 6 – Ronda 13 | 12/12 hallazgos (D1–D12) de `AUDITORIA.md` resueltos o cerrados sin acción; build check (`check-budget.js`) en verde (602.75 kB / 620 kB). |
+
+### Skills del ecosistema — instaladas, sin aplicar aún
+
+| Skill | Estado en este proyecto |
+|---|---|
+| `performance-optimization` | Instalada en `.agents/skills/performance-optimization/`, **no aplicada**. Las Rondas 6–13 de performance/deployment se hicieron con `vercel-react-best-practices` (específica de React/Next.js), no con esta. Es una skill genérica de medir→identificar→corregir→verificar→guardar, útil si aparece un cuello de botella fuera del patrón React (backend, queries, caching) — no hay evidencia hoy de que este repo lo necesite, dado que no tiene base de datos ni queries (ver `memory-bank/README.md § Datos`). |
+
+### Skills internas — creadas para este proyecto
+
+| Skill | Origen | Estado |
+|---|---|---|
+| [`api-contract-sync`](.agents/skills/api-contract-sync/SKILL.md) v1.0 | Gap 1 de [`memory-bank/specific_gaps.md`](specific_gaps.md): solo 3 de 8 endpoints `/api/metrics/*` tenían TypeSpec en `frontend/specs/api-types.ts` y entrada en `API_Reference.md`. | **Validado** con un dry-run sobre `/api/metrics/summary` (sin tocar el repo); el dry-run ajustó el Paso 2 del skill. Referenciado desde `.agents/rules/r01-api-contract-sync.md`. **Aún no aplicado a un endpoint real** — los 5 endpoints sin cobertura (`/api/metrics` base, `/summary`, `/comparison`, `/b2b`, `/b2c`) siguen pendientes de conectar/documentar. |
+
+---
+
 - [Auditoría completa](memory-bank/AUDITORIA.md)
+- [Gaps específicos del repo](specific_gaps.md)
 - [Skill de accesibilidad](.agents/skills/accessibility/SKILL.md)
 - [Referencia WCAG 2.2](.agents/skills/accessibility/references/WCAG.md)
+- [Skill interna: api-contract-sync](.agents/skills/api-contract-sync/SKILL.md)
+- [Skill del ecosistema: performance-optimization](.agents/skills/performance-optimization/SKILL.md)
